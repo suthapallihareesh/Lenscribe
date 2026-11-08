@@ -9,10 +9,14 @@ if not defined PY (
   pause
   exit /b
 )
-echo Installing or updating yt-dlp...
-%PY% -m pip install -q -U yt-dlp
-where ffmpeg >nul 2>nul || (echo Installing ffmpeg, optional... & winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements >nul 2>nul)
+echo [1/3] Installing or updating yt-dlp...
+%PY% -m pip install -q -U "yt-dlp[default]"
+echo [2/3] Checking Deno (needed for YouTube)...
+where deno >nul 2>nul || (echo Installing Deno... & winget install -e --id DenoLand.Deno --accept-source-agreements --accept-package-agreements >nul 2>nul)
+echo [3/3] Checking ffmpeg (HD video and frames)...
+where ffmpeg >nul 2>nul || (echo Installing ffmpeg... & winget install -e --id Gyan.FFmpeg --accept-source-agreements --accept-package-agreements >nul 2>nul)
 echo.
 echo Lenscribe is starting. Your browser will open. Keep this window open while you use it.
+echo Look at the line below: it must say "JS runtime for YouTube: deno". If it says NONE, close this window and run this file once more.
 %PY% lenscribe_server.py
 pause
