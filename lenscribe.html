@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lenscribe</title>
+<style>
+:root{--bg:#07070f;--card:#12122a;--line:#2b2b55;--tx:#ececff;--mu:#8e8eb5;--ok:#34d399;--warn:#fbbf24}
+*{box-sizing:border-box}body{margin:auto;padding:18px;background:radial-gradient(900px 400px at 50% -100px,#2a1a6e55,transparent),var(--bg);color:var(--tx);font:14px/1.5 system-ui,sans-serif;max-width:760px}
+h1{margin:0;font-size:30px;background:linear-gradient(90deg,#c4b5fd,#60a5fa);-webkit-background-clip:text;color:transparent}.sub{color:var(--mu);margin:2px 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0}.card h2{margin:0 0 10px;font-size:15px}
+input[type=text],select,textarea{width:100%;padding:10px;background:#0c0c1e;border:1px solid var(--line);border-radius:10px;color:var(--tx);font:inherit}
+textarea{height:260px;font:12px/1.4 monospace}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px}
+button,.btn{background:linear-gradient(90deg,#8b5cf6,#3b82f6);color:#fff;border:0;border-radius:10px;padding:10px 16px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}
+.g{background:#1b1b3a;border:1px solid var(--line)}.dis{opacity:.45;pointer-events:none}
+label.c{display:inline-flex;gap:6px;align-items:center;background:#0c0c1e;border:1px solid var(--line);border-radius:999px;padding:6px 12px;cursor:pointer}
+#player iframe,#player video{width:100%;border:0;border-radius:12px;background:#000;max-height:70vh}#player iframe{height:min(70vh,480px)}
+#log{font-size:12px;color:var(--mu);max-height:130px;overflow:auto;margin-top:8px}#log .warn{color:var(--warn)}#log .ok{color:var(--ok)}
+#frames{display:flex;gap:6px;overflow:auto;margin-top:8px}#frames img{height:110px;border-radius:8px}.hide{display:none}small{color:var(--mu)}
+</style></head><body>
+<h1>Lenscribe</h1><div class="sub">Stop saving. Start using. Paste a video link, no keys, no signup.</div>
+<div id="srv" class="card hide" style="border-color:#fbbf24;color:#fbbf24"></div>
+
+<div class="card"><h2>1 · Paste a link</h2>
+<input type="text" id="url" placeholder="YouTube, Instagram, TikTok, X, Facebook, Vimeo, Reddit or direct .mp4 link">
+<div class="row"><button id="load">Load video</button><button class="g" id="dlfull">⬇ Download full video</button><button class="g" id="tx">📝 Transcript → copy for AI</button><label class="btn g">or upload a file<input type="file" id="file" accept="video/*,audio/*" hidden></label></div>
+<div id="log"></div>
+<details style="margin-top:10px"><summary style="cursor:pointer;color:var(--mu)">⚙ Settings: API keys (kept only in this browser)</summary>
+<div class="row"><input type="password" id="k_fs" placeholder="FastSaver key: full video download (free 1,000 credits)"><input type="password" id="k_sd" placeholder="Supadata key: transcripts for all platforms (free tier)"><input type="password" id="k_gm" placeholder="Gemini key (optional): YouTube transcripts + AI"><input type="password" id="k_gq" placeholder="Groq key (optional): fast Whisper + AI"><input type="text" id="k_cb" placeholder="Cobalt instance URL (optional)"></div></details>
+<div class="row"><button class="g" id="rep">Pipeline report</button></div><pre id="prep" style="white-space:pre-wrap;font-size:12px;color:var(--mu)"></pre></div>
+
+<div class="card hide" id="watch"><h2>Watch &amp; download</h2><div id="player"></div>
+<div class="row"><a class="btn g" id="dl" target="_blank" rel="noopener">Download video</a><a class="btn g" id="orig" target="_blank" rel="noopener">Open original</a></div>
+<small id="dlnote"></small></div>
+
+<div class="card hide" id="ai"><h2>2 · Break it down with AI</h2>
+<div class="row" style="margin-top:0">
+<label class="c"><input type="checkbox" class="w" value="transcript" checked>Transcript</label>
+<label class="c"><input type="checkbox" class="w" value="script">Script</label>
+<label class="c"><input type="checkbox" class="w" value="summary" checked>Summary</label>
+<label class="c"><input type="checkbox" class="w" value="steps">List / steps</label>
+<label class="c"><input type="checkbox" class="w" value="frames">Frames + on-screen text</label></div>
+<div class="row"><input type="text" id="goal" placeholder="Your goal, e.g. make a shopping list, or remake this as my own script"></div>
+<div class="row"><select id="bot" style="max-width:260px"><option value="any">Optimize for: any AI</option><option>ChatGPT</option><option>Claude</option><option>Gemini</option><option>DeepSeek</option><option>Grok</option><option>Perplexity</option><option>Copilot</option></select>
+<button id="run">Break it down</button></div></div>
+
+<div class="card hide" id="out"><h2>3 · Copy for your chatbot</h2><textarea id="res"></textarea><div id="frames"></div>
+<div class="row"><button id="copy">Copy &amp; open chatbot</button><button class="g" id="txt">Save .txt</button><button class="g" id="fdl">Save frames</button></div></div>
+
+<script>
+const $=id=>document.getElementById(id),enc=encodeURIComponent,sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const log=(m,c)=>{const d=document.createElement('div');d.textContent=m;d.className=c||'';$('log').prepend(d)};
+const get=async(u,o)=>{const r=await fetch(u,o);const t=await r.text();if(!r.ok)throw new Error(r.status);try{return JSON.parse(t)}catch{return t}};
+const tryAll=async fs=>{for(const f of fs){try{const r=await f();if(r)return r}catch{}}return null};
+const PX=['https://corsproxy.io/?url=','https://api.allorigins.win/raw?url='],INV=['yewtu.be','inv.nadeko.net','invidious.nerdvpn.de','invidious.privacyredirect.com'];
+const OVH='https://oai.endpoints.kepler.ai.cloud.ovh.net/v1',L7='https://api.llm7.io/v1',FLM='https://flm.stonech.at/v1';
+let S={};
+
+function detect(u){let m;
+ if(m=u.match(/(?:v=|youtu\.be\/|shorts\/|embed\/|live\/)([\w-]{11})/))return{p:'youtube',id:m[1],embed:'https://www.youtube.com/embed/'+m[1]};
+ if(m=u.match(/instagram\.com\/(?:[\w.]+\/)?(?:reels?|p|tv)\/([\w-]+)/))return{p:'instagram',id:m[1],embed:`https://www.instagram.com/p/${m[1]}/embed`};
+ if(/tiktok\.com/.test(u)){m=u.match(/video\/(\d+)/);return{p:'tiktok',embed:m&&'https://www.tiktok.com/embed/v2/'+m[1]}}
+ if(m=u.match(/vimeo\.com\/(?:.*\/)?(\d+)/))return{p:'vimeo',embed:'https://player.vimeo.com/video/'+m[1]};
+ if(/facebook\.com|fb\.watch/.test(u))return{p:'facebook',embed:`https://www.facebook.com/plugins/video.php?href=${enc(u)}&show_text=false`};
+ if(/(?:x|twitter)\.com\/[^/]+\/status\/\d+/.test(u))return{p:'x'};
+ if(/reddit\.com/.test(u))return{p:'reddit'};
+ if(/\.(mp4|webm|mov)(\?|$)/i.test(u))return{p:'direct'};
+ return{p:'other'}}
+
+async function proxied(u){for(const p of PX){try{const r=await fetch(p+enc(u));if(r.ok)return r}catch{}}throw 0}
+async function igMedia(id){const r=await proxied(`https://www.instagram.com/p/${id}/embed/captioned/`),t=await r.text();const v=(t.match(/"video_url":"([^"]+)"/)||[])[1];return v&&JSON.parse('"'+v+'"')}
+async function piped(id){if(S.pp)return S.pp;for(const x of ['pipedapi.kavin.rocks','pipedapi.adminforge.de','api.piped.private.coffee']){try{return S.pp=await get(`https://${x}/streams/${id}`)}catch{}}throw 0}
+
+async function resolve(u,d){
+ const t=await tryAll([()=>SRV&&get('/api/info?url='+enc(u)).then(i=>({title:i.title,author_name:i.uploader})),()=>get('https://noembed.com/embed?url='+enc(u)),()=>d.p==='youtube'&&get(`https://www.youtube.com/oembed?url=${enc(u)}&format=json`)]);
+ const title=t&&t.title?t.title+(t.author_name?' — '+t.author_name:''):'';
+ const media=await pipe('video',VIDEO,d.p,u,d);
+ return{title,media}}
+
+async function toBlob(url){return tryAll([async()=>{const r=await fetch(url);if(!r.ok)throw 0;return r.blob()},async()=>(await proxied(url)).blob()])}
+
+function showPlayer(){
+ const p=$('player');p.innerHTML='';$('watch').classList.remove('hide');$('ai').classList.remove('hide');
+ const dl=$('dl');dl.classList.remove('dis');dl.removeAttribute('download');
+ if(S.blob){const v=document.createElement('video');v.controls=true;v.src=S.bu=URL.createObjectURL(S.blob);p.append(v);dl.href=S.bu;dl.download=(S.title||'video').replace(/[^\w -]/g,'').slice(0,60)+'.mp4';$('dlnote').textContent='Full video loaded in your browser. Frames, OCR and audio transcription are available.'}
+ else{if(S.d?.embed&&location.protocol==='file:'&&S.d.p==='youtube'){p.innerHTML=`<a href="${S.url}" target="_blank" rel="noopener"><img src="https://i.ytimg.com/vi/${S.d.id}/hqdefault.jpg" style="width:100%;border-radius:12px"></a>`;log('YouTube refuses to play embedded in a file:// page (Error 153). Open Lenscribe from http://localhost to play it here.','warn')}
+  else if(S.d?.embed){const f=document.createElement('iframe');f.referrerPolicy='strict-origin-when-cross-origin';f.src=S.d.embed;f.allowFullscreen=true;f.allow='autoplay;encrypted-media;picture-in-picture';p.append(f)}
+  if(S.media){dl.href=S.media;$('dlnote').textContent='The browser can’t save this file directly (the platform blocks it). The button opens the video file: right-click or long-press, then Save. Or download it yourself and use “or upload a file” to unlock frames and audio transcription.'}
+  else{dl.classList.add('dis');$('dlnote').textContent='No direct video file found for this platform without a key. The embedded player above plays the full video. To get frames or audio, save the video yourself and use “or upload a file”.'}}
+ $('orig').href=S.url||'#';$('orig').classList.toggle('dis',!S.url)}
+
+$('load').onclick=async()=>{const u=$('url').value.trim();if(!u)return;S={url:u,d:detect(u)};$('log').innerHTML='';log('Detected: '+S.d.p);
+ const r=await resolve(u,S.d);S.title=r.title;S.media=r.media;if(r.title)log('Title: '+r.title,'ok');
+ if(r.media){log('Found the video file, downloading…');S.blob=await toBlob(r.media);log(S.blob?'Video downloaded in-browser.':'Video file found but the browser is blocked from downloading it.',S.blob?'ok':'warn')}else log('No direct video file found (platform needs a key or blocks it).','warn');
+ showPlayer()};
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;S={p:'upload',d:{p:'upload'},blob:f,title:f.name,url:''};log('Loaded local file: '+f.name,'ok');showPlayer()};
+
+function vtt(v){if(typeof v!=='string')return'';const o=[];let last='';for(const b of v.split(/\n\n+/)){const m=b.match(/(\d+:)?(\d+):(\d+)[.,]\d+\s+-->/);if(!m)continue;const x=b.split('\n').filter(l=>!/-->|^WEBVTT|^\d+$/.test(l)).join(' ').replace(/<[^>]+>/g,'').trim();if(!x||x===last)continue;last=x;o.push(`[${m[1]||''}${m[2]}:${m[3]}] ${x}`)}return o.join('\n')}
+async function ytCaps(id){return tryAll([
+ async()=>{const s=(await piped(id)).subtitles||[];const c=s.find(x=>/^en/.test(x.code))||s[0];return c&&vtt(await get(c.url))},
+ async()=>{for(const h of INV){try{const d=await get(`https://${h}/api/v1/captions/${id}`);const c=d.captions?.find(x=>/^en/.test(x.language_code||''))||d.captions?.[0];if(c)return vtt(await get(`https://${h}${c.url}`))}catch{}}}])}
+
+function wav(f){const b=new DataView(new ArrayBuffer(44+f.length*2)),w=(o,s)=>[...s].forEach((c,i)=>b.setUint8(o+i,c.charCodeAt(0)));w(0,'RIFF');b.setUint32(4,36+f.length*2,true);w(8,'WAVEfmt ');b.setUint32(16,16,true);b.setUint16(20,1,true);b.setUint16(22,1,true);b.setUint32(24,16000,true);b.setUint32(28,32000,true);b.setUint16(32,2,true);b.setUint16(34,16,true);w(36,'data');b.setUint32(40,f.length*2,true);f.forEach((x,i)=>b.setInt16(44+i*2,Math.max(-1,Math.min(1,x))*32767,true));return new Blob([b],{type:'audio/wav'})}
+async function whisper(blob){let pcm;try{const buf=await new AudioContext().decodeAudioData(await blob.arrayBuffer());const oc=new OfflineAudioContext(1,Math.ceil(buf.duration*16000),16000),s=oc.createBufferSource();s.buffer=buf;s.connect(oc.destination);s.start();pcm=(await oc.startRendering()).getChannelData(0)}catch{log('Could not read audio from this file.','warn');return''}
+ const N=800000,max=Math.min(6,Math.ceil(pcm.length/N));let out=[];
+ for(let i=0;i<max;i++){log(`Transcribing audio ${i+1}/${max} (free limit: 2 requests a minute)…`);const fd=new FormData();fd.append('file',wav(pcm.slice(i*N,(i+1)*N)),'a.wav');fd.append('model','whisper-large-v3');
+  try{const d=await get(OVH+'/audio/transcriptions',{method:'POST',body:fd});const s=i*50;out.push(`[${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}] ${d.text.trim()}`)}catch(e){log('Speech-to-text failed ('+e.message+').','warn');break}
+  if(i<max-1)await sleep(31000)}
+ if(pcm.length>max*N)log('Only the first ~5 minutes were transcribed.','warn');return out.join('\n')}
+
+async function grab(b,n){const v=document.createElement('video');v.muted=true;v.src=URL.createObjectURL(b);await new Promise((a,r)=>{v.onloadedmetadata=a;v.onerror=()=>r()});const c=document.createElement('canvas'),k=Math.min(1,640/v.videoWidth);c.width=v.videoWidth*k;c.height=v.videoHeight*k;const o=[];
+ for(let i=0;i<n;i++){const t=v.duration*(i+.5)/n;v.currentTime=t;await new Promise(a=>v.onseeked=a);c.getContext('2d').drawImage(v,0,0,c.width,c.height);o.push({t,img:c.toDataURL('image/jpeg',.7)})}return o}
+const ts=t=>`${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;
+async function ocr(fr){if(!window.Tesseract)await new Promise((a,b)=>{const s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';s.onload=a;s.onerror=b;document.head.append(s)});const o=[];
+ for(const f of fr){const r=await Tesseract.recognize(f.img,'eng');const x=r.data.text.replace(/\s+/g,' ').trim();if(x.length>2)o.push(`[${ts(f.t)}] ${x}`)}return o.join('\n')}
+async function llm(content,max=1800){return pipe('ai',AI,'*',content,max)}
+async function vision(fr){const o=[];for(const f of fr){const r=await llm([{type:'text',text:'Describe this video frame in one short sentence.'},{type:'image_url',image_url:{url:f.img}}],80);if(r)o.push(`[${ts(f.t)}] ${r.trim()}`);await sleep(6500)}return o.join('\n')}
+
+const LIM={ChatGPT:12000,Claude:20000,Gemini:20000,DeepSeek:10000,Grok:8000,Perplexity:4000,Copilot:6000,any:12000};
+const OPEN={ChatGPT:'https://chatgpt.com/',Claude:'https://claude.ai/new',Gemini:'https://gemini.google.com/app',DeepSeek:'https://chat.deepseek.com/',Grok:'https://grok.com/',Perplexity:'https://www.perplexity.ai/',Copilot:'https://copilot.microsoft.com/'};
+const TASK={transcript:'a clean transcript with timestamps',script:'a shot-by-shot script (hook, beats, call to action)',summary:'a 5-bullet summary with key takeaways',steps:'an actionable checklist (steps, items, ingredients or tools mentioned)',frames:'a timeline of the visual moments and on-screen text'};
+function pack(bot,x){const L=LIM[bot],cut=s=>s&&s.length>L?s.slice(0,L)+'\n[…trimmed for '+bot+']':s;
+ const sec=[['Source',(x.title||'(untitled)')+(S.url?'\n'+S.url:'')],['Transcript',cut(x.tr)],['On-screen text',cut(x.ocr)],['Visual moments',cut(x.vis)],['AI breakdown',x.ai]].filter(s=>s[1]);
+ const task=x.goal||'Use this as the full content of the video and help me with it.';
+ if(bot==='Claude')return `<video_content>\n`+sec.map(([k,v])=>`<${k.toLowerCase().replace(/\W+/g,'_')}>\n${v}\n</${k.toLowerCase().replace(/\W+/g,'_')}>`).join('\n')+`\n</video_content>\n\n<task>\n${task}\n</task>\nBase your answer only on the video content above.`;
+ if(bot==='Perplexity')return `${task}\n\nUse the following extracted video content as the primary source:\n\n`+sec.map(([k,v])=>`${k}:\n${v}`).join('\n\n');
+ if(bot==='DeepSeek')return sec.map(([k,v],i)=>`${i+1}. ${k}\n${v}`).join('\n\n')+`\n\nTask: ${task}\nThink step by step, then give the final answer.`;
+ if(bot==='Gemini'||bot==='Copilot'||bot==='Grok')return `Video content (extracted, treat as accurate):\n\n`+sec.map(([k,v])=>`${k.toUpperCase()}\n${v}`).join('\n\n')+`\n\nTask: ${task}`+(bot==='Grok'?'\nBe direct and concise.':'');
+ return `I can’t share the video itself, so here is its content extracted as text. Treat it as ground truth.\n\n`+sec.map(([k,v])=>`## ${k}\n${v}`).join('\n\n')+`\n\n## Task\n${task}`}
+
+const REP={video:{},transcript:{},ai:{}};
+async function pipe(cat,list,p,...a){for(const[n,pl,f]of list){if(pl!=='*'&&!pl.includes(p))continue;try{const r=await f(...a);if(r){REP[cat][n]='ok';log(cat+': '+n+' worked','ok');return r}REP[cat][n]='no'}catch{REP[cat][n]='fail'}}return null}
+const vm=u=>u.match(/\.com\/([^/]+)\/status\/(\d+)/),generic=d=>d.p!=='youtube'&&d.p!=='direct';
+const og=async u=>{const t=await(await proxied(u)).text();const m=t.match(/property="og:video(?::secure_url|:url)?"\s+content="([^"]+)"/)||t.match(/content="([^"]+)"\s+property="og:video/);return m&&m[1].replace(/&amp;/g,'&')};
+const VIDEO=[
+ ['Direct link',['direct'],u=>u],
+ ['tikwm',['tiktok'],async u=>{const x=(await get('https://www.tikwm.com/api/?hd=1&url='+enc(u))).data;return x?.hdplay||x?.play}],
+ ['tiklydown',['tiktok'],async u=>{const x=await get('https://api.tiklydown.eu.org/api/download/v3?url='+enc(u));return x.result?.video_data?.nwm_video_url_HQ||x.video?.noWatermark}],
+ ['fxtwitter',['x'],async u=>{const m=vm(u);return(await get(`https://api.fxtwitter.com/${m[1]}/status/${m[2]}`)).tweet?.media?.videos?.[0]?.url}],
+ ['vxtwitter',['x'],async u=>{const m=vm(u);return(await get(`https://api.vxtwitter.com/${m[1]}/status/${m[2]}`)).media_extended?.find(x=>x.type==='video')?.url}],
+ ['Reddit JSON',['reddit'],async u=>(await get(u.replace(/\/?(\?.*)?$/,'')+'.json'))[0].data.children[0].data.media?.reddit_video?.fallback_url],
+ ['Vimeo player config',['vimeo'],async u=>{const c=await get(`https://player.vimeo.com/video/${u.match(/(\d{6,})/)[1]}/config`);return c.request.files.progressive?.sort((a,b)=>b.height-a.height)[0]?.url}],
+ ['Piped',['youtube'],async(u,d)=>(await piped(d.id)).videoStreams?.find(s=>!s.videoOnly&&/mp4/.test(s.mimeType))?.url],
+ ['Invidious',['youtube'],async(u,d)=>{for(const h of INV){try{const v=await get(`https://${h}/api/v1/videos/${d.id}`);const f=v.formatStreams?.slice(-1)[0];if(f?.url)return f.url}catch{}}}],
+ ['Cobalt (your instance)','*',async u=>{const c=K('cb');if(!c)return;const x=await get(c,{method:'POST',headers:{'content-type':'application/json',accept:'application/json'},body:JSON.stringify({url:u})});return x.url||x.picker?.[0]?.url}],
+ ['VKR downloader','*',async u=>{const x=await get('https://api.vkrdownloader.xyz/server?vkr='+enc(u));const l=x.data?.downloads||[];return(l.find(i=>/mp4/i.test(i.format_id||i.ext||''))||l[0])?.url}],
+ ['Microlink','*',async(u,d)=>generic(d)&&(await get(`https://api.microlink.io/?url=${enc(u)}&video=true`)).data?.video?.url],
+ ['Instagram embed (proxy)',['instagram'],(u,d)=>igMedia(d.id)],
+ ['Open Graph video (proxy)','*',(u,d)=>generic(d)&&og(u)]];
+const vr=n=>{const m=n.match(/gemini-(\d+)(?:\.(\d+))?/);return m?+m[1]+(+m[2]||0)/100:0};let GMN;
+async function gem(parts){const k=K('gm');if(!k)return'';const B='https://generativelanguage.googleapis.com/v1beta';if(!GMN)GMN=(await get(`${B}/models?pageSize=200&key=${k}`)).models.filter(m=>(m.supportedGenerationMethods||[]).includes('generateContent')&&/flash/.test(m.name)&&!/image|tts|live|audio|embed|lite|robotics|computer/.test(m.name)).map(m=>m.name.replace('models/','')).sort((a,b)=>vr(b)-vr(a))[0];const d=await get(`${B}/models/${GMN}:generateContent`,{method:'POST',headers:{'content-type':'application/json','x-goog-api-key':k},body:JSON.stringify({contents:[{parts}]})});return(d.candidates?.[0]?.content?.parts||[]).map(x=>x.text).join('')}
+async function grWhisper(b){const k=K('gq');if(!k||b.size>25e6)return'';const fd=new FormData();fd.append('file',b,'v.mp4');fd.append('model','whisper-large-v3-turbo');fd.append('response_format','verbose_json');const d=await get('https://api.groq.com/openai/v1/audio/transcriptions',{method:'POST',headers:{authorization:'Bearer '+k},body:fd});return(d.segments||[]).map(s=>`[${ts(s.start)}] ${s.text.trim()}`).join('\n')||d.text}
+const TR=[
+ ['Local server (yt-dlp)','*',async()=>SRV&&S.url&&(await get('/api/transcript?url='+enc(S.url),{headers:K('gq')?{'X-Groq-Key':K('gq')}:{}})).text],
+ ['Supadata (key)','*',async()=>S.url&&supa(S.url)],
+ ['Gemini reads YouTube (key)',['youtube'],()=>gem([{file_data:{file_uri:S.url}},{text:'Transcribe all speech with [m:ss] timestamps. Output only the transcript.'}])],
+ ['Piped subtitles',['youtube'],async()=>{const s=(await piped(S.d.id)).subtitles||[];const c=s.find(x=>/^en/.test(x.code))||s[0];return c&&vtt(await get(c.url))}],
+ ['Invidious captions',['youtube'],async()=>{for(const h of INV){try{const d=await get(`https://${h}/api/v1/captions/${S.d.id}`);const c=d.captions?.find(x=>/^en/.test(x.language_code||''))||d.captions?.[0];if(c)return vtt(await get(`https://${h}${c.url}`))}catch{}}}],
+ ['YouTube timedtext (proxy)',['youtube'],async()=>{const t=await(await proxied(`https://video.google.com/timedtext?lang=en&v=${S.d.id}`)).text();const x=[...t.matchAll(/<text start="([\d.]+)"[^>]*>(.*?)<\/text>/g)];return x.map(m=>`[${ts(+m[1])}] ${m[2].replace(/&amp;#39;|&#39;/g,"'").replace(/&amp;/g,'&')}`).join('\n')}],
+ ['Groq Whisper (key)','*',async()=>S.blob&&grWhisper(S.blob)],
+ ['OVH Whisper','*',async()=>S.blob&&whisper(S.blob)]];
+const chat=(base,model,auth,vis)=>async(c,m)=>{if(typeof c!=='string'&&!vis)return;const d=await get(base+'/chat/completions',{method:'POST',headers:{'content-type':'application/json',...(auth?{authorization:auth}:{})},body:JSON.stringify({...(model?{model}:{}),messages:[{role:'user',content:c}],max_tokens:m})});if(d.error)throw 0;return d.choices[0].message.content};
+const ovhId=async re=>(await get(OVH+'/models')).data.map(x=>x.id).find(x=>re.test(x));
+const AI=[
+ ['FLM','*',chat(FLM)],
+ ['LLM7','*',chat(L7,'default','Bearer unused',1)],
+ ['OVH Llama','*',async(c,m)=>typeof c==='string'&&chat(OVH,await ovhId(/Llama-3_3-70B/))(c,m)],
+ ['OVH vision','*',async(c,m)=>typeof c!=='string'&&chat(OVH,await ovhId(/VL/i),'',1)(c,m)],
+ ['Kilo free gateway','*',chat('https://api.kilo.ai/api/gateway','kilo-auto/free')],
+ ['Groq (key)','*',async(c,m)=>K('gq')&&chat('https://api.groq.com/openai/v1','llama-3.3-70b-versatile','Bearer '+K('gq'))(c,m)],
+ ['Gemini (key)','*',async c=>typeof c==='string'&&gem([{text:c}])]];
+$('rep').onclick=()=>{const L=[];for(const[c,l,x]of[['video',VIDEO,1],['transcript',TR,0],['ai',AI,0]]){const o=Object.entries(REP[c]),f=s=>o.filter(e=>e[1]===s).map(e=>e[0]);L.push(`${c.toUpperCase()}: ${l.length+x} wired${x?' (incl. FastSaver on Download)':''}\n  worked: ${f('ok').join(', ')||'none yet'}\n  failed: ${f('fail').length} · no result: ${f('no').length} · not tried: ${l.length+x-o.length}`)}L.push('PLUS: Tesseract OCR, frame capture, OVH/Groq Whisper, 8 chatbot packs');$('prep').textContent=L.join('\n')};
+let SRV=false;const noSrv=()=>{const b=$('srv');b.classList.remove('hide');b.innerHTML='<b>Not connected to the Lenscribe server.</b> Playing, downloading and transcripts will NOT work in this window.<br>Close this tab, double-click <b>start_lenscribe.bat</b> (in the same folder as this file), and use the page that opens at <b>http://localhost:8000</b>.'};
+fetch('/api/ping').then(r=>{if(r.ok){SRV=true;log('Local server connected: real downloads, captions and transcripts via yt-dlp.','ok')}else noSrv()}).catch(noSrv);
+const K=n=>{try{return localStorage.getItem('ls_'+n)||''}catch{return''}};
+['fs','sd','gm','gq','cb'].forEach(n=>{const e=$('k_'+n);e.value=K(n);e.onchange=()=>{try{localStorage.setItem('ls_'+n,e.value.trim())}catch{}}});
+async function fsMedia(u,d){const k=K('fs');if(!k)return null;const H={'X-Api-Key':k};
+ try{const r0=d.p==='youtube'?await get('https://api.fastsaver.io/v1/youtube/download',{method:'POST',headers:{...H,'content-type':'application/json'},body:JSON.stringify({url:u,format:'720p'})}):await get('https://api.fastsaver.io/v1/fetch?url='+enc(u),{headers:H});
+  const r=r0.data||r0;return r.download_url||r.items?.find(i=>i.download_url)?.download_url||null}
+ catch(e){log('FastSaver failed: '+e.message+' (bad key, no credits, or the browser blocked the call)','warn');return null}}
+const segs=d=>Array.isArray(d.content)?d.content.map(s=>`[${ts((s.offset||0)/1000)}] ${s.text}`).join('\n'):String(d.content||'');
+async function supa(u){const k=K('sd');if(!k)return'';const H={headers:{'x-api-key':k}};
+ try{const d=await get('https://api.supadata.ai/v1/transcript?text=false&url='+enc(u),H);if(d.jobId){log('Transcript job queued, waiting…');for(let i=0;i<25;i++){await sleep(3000);const j=await get('https://api.supadata.ai/v1/transcript/'+d.jobId,H);if(j.status==='completed')return segs(j);if(j.status==='failed')return''}return''}return segs(d)}
+ catch(e){log('Supadata failed: '+e.message+' (bad key, no credits, or the browser blocked the call)','warn');return''}}
+$('dlfull').onclick=async()=>{const u=$('url').value.trim();if(!u)return;if(S.url!==u)await $('load').onclick();
+ if(SRV){log('yt-dlp is downloading on your computer. Your browser will save the file when it is ready (can take a minute).','ok');const a=document.createElement('a');a.href='/api/download?url='+enc(u)+'&q=1080';a.download='';document.body.append(a);a.click();a.remove();return}
+ log('Looking for the full video file…');const m=await pipe('video',[['FastSaver (key)','*',fsMedia]],S.d.p,S.url,S.d);
+ if(m){S.media=m;log('Got the full video from FastSaver.','ok');const b=await toBlob(m);if(b)S.blob=b;showPlayer();if(!b){log('Opening the download link (the platform blocks in-page saving).','ok');window.open(m,'_blank')}}
+ else if(S.blob||S.media){log(K('fs')?'FastSaver had no file; using the free source.':'No FastSaver key set, using the free source.','warn');showPlayer()}
+ else log('No full-video source worked. Add a FastSaver key under Settings, or upload the file.','warn')};
+$('tx').onclick=async()=>{const u=$('url').value.trim();if(!u)return;if(S.url!==u)S={url:u,d:detect(u)};$('ai').classList.remove('hide');document.querySelectorAll('.w').forEach(c=>c.checked=c.value==='transcript');await $('run').onclick()};
+$('run').onclick=async()=>{const want=[...document.querySelectorAll('.w:checked')].map(c=>c.value),bot=$('bot').value,goal=$('goal').value.trim();const x={title:S.title,goal};$('run').classList.add('dis');
+ try{const needTr=want.some(w=>/transcript|script|summary|steps/.test(w));
+  if(needTr){log('Getting transcript…');x.tr=await pipe('transcript',TR,S.d?.p||'upload')||'';if(x.tr)log('Transcript found.','ok');else log('No transcript source worked without a video file. Upload the video (or its audio) to unlock transcription.','warn')}
+  if(want.includes('frames')){if(!S.blob&&SRV&&S.url){log('Fetching a 480p copy through yt-dlp…');S.blob=await toBlob('/api/download?url='+enc(S.url)+'&q=480')}
+  if(!S.blob)log('Frames need the video file. Run the local server, or upload it with “or upload a file”.','warn');else{log('Extracting frames…');const fr=await grab(S.blob,6);S.fr=fr;$('frames').innerHTML=fr.map(f=>`<img src="${f.img}">`).join('');log('Reading on-screen text…');x.ocr=await ocr(fr);log('Describing frames with AI (≈40 s)…');x.vis=await vision(fr)}}
+  const asks=want.filter(w=>w!=='frames'&&w!=='transcript').map(w=>TASK[w]);if(x.tr&&(asks.length||goal)){log('AI is writing the breakdown…');const a=await llm(`Video: ${x.title||''}\n\nTranscript:\n${x.tr.slice(0,14000)}\n\n${x.ocr?'On-screen text:\n'+x.ocr+'\n\n':''}Produce: ${asks.join('; ')||'a short summary'}.${goal?' The user\'s goal: '+goal:''}`);if(a)x.ai=a;else log('AI step unavailable right now; the raw transcript pack is still ready.','warn')}
+  if(!x.tr&&!x.ocr&&!x.vis)log('Nothing extractable yet. Upload the video file and try again.','warn');
+  $('res').value=pack(bot,x);$('out').classList.remove('hide');log('Done. Copy it into your chatbot.','ok')}catch(e){log('Error: '+(e.message||e),'warn')}$('run').classList.remove('dis')};
+$('copy').onclick=async()=>{const t=$('res').value;try{await navigator.clipboard.writeText(t)}catch{$('res').select();document.execCommand('copy')}const b=$('bot').value;if(OPEN[b])window.open(OPEN[b],'_blank')};
+$('txt').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([$('res').value]));a.download='lenscribe.txt';a.click()};
+$('fdl').onclick=()=>(S.fr||[]).forEach((f,i)=>{const a=document.createElement('a');a.href=f.img;a.download=`frame_${i+1}_${ts(f.t).replace(':','m')}s.jpg`;a.click()});
+</script></body></html>
